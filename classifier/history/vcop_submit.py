@@ -17,6 +17,7 @@ import time
 class PromptLearner(nn.Module):
     def __init__(self, args, class_names, clip_model, text_prompt, n_ctx=12, prompt_pos=2):
         super().__init__()
+        # clip输出维度一样
         ctx_dim = clip_model.ln_final.weight.shape[0]
         dtype = clip_model.dtype
         self.clip_model = clip_model
@@ -35,13 +36,17 @@ class PromptLearner(nn.Module):
         self.tokenized_prompts = tokenized_prompts
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized_prompts.cuda()).type(self.dtype)
+        # 注册一个不需要梯度的缓冲区
         self.register_buffer( 'token_prefix', embedding[:, :1, :])
         self.register_buffer( 'token_suffix', embedding[:, 1+(n_ctx*self.args.text_prompt):,:])
-
+        # 非分类标记化提示”（non-classified tokenized prompts）。这个术语用来描述与特定类别名称无关的文本提示
+        # prompt_prefix: 'x x x x x x x ...... x x x.'
         nc_prompts = [prompt_prefix+'.' ]
+        # tokenized : 分解为一些列单词或者词元， 相当于NLP的预处理操作
         nc_tokenized_prompts = torch.cat([tokenize(p) for p in nc_prompts])
         self.nc_tokenized_prompts = nc_tokenized_prompts
         with torch.no_grad():
+            # transformer 嵌入为
             embedding = clip_model.token_embedding(nc_tokenized_prompts.cuda()).type(self.dtype)
         self.register_buffer('nc_token_prefix', embedding[:, :1,:])
         self.register_buffer('nc_token_suffix', embedding[:, 1+n_ctx:,:])
@@ -52,7 +57,9 @@ class PromptLearner(nn.Module):
 
     def forward(self,indices, test_class=False, infer=False):
         if test_class:
+            # prompt 是提示的前缀， 这里全部用 x 来代替
             prompt_prefix =' '.join(['x'] * self.n_ctx*self.args.text_prompt)
+            # 每一个prompt里面的末尾加上类名和句号
             prompts = [prompt_prefix + ' ' + name + '.' for name in test_class]
             self.name_lens = [len(_tokenizer.encode(name)) for name in test_class]
 
@@ -159,9 +166,9 @@ class CLIP(nn.Module):
     def forward(self, image, num_test=None, test_class=None, test=False):
 
         with torch.no_grad():
-            image_features = self.image_encoder(image.type(self.dtype))
+            image_features = self.image_encoder(image.type(self.dtype)) # image [12, 3, 224, 224] image_features [12, 768]
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
-            image_features = image_features.detach()
+            image_features = image_features.detach() # 从计算图分离出来， 不需要计算梯度
 
         if test:
             n_test = len(test_class)
@@ -180,15 +187,22 @@ class CLIP(nn.Module):
             return logits
 
         else:
+            # 这部分是AttriCLIP核心部分， 改也是改这块
+            # 选取相应的Prompt进行训练 
             n_class = self.n_class
-            text_key = self.text_key / self.text_key.norm(dim=-1, keepdim=True)
-            probability = image_features @ text_key.t() # Cosine similarity
-            _, indices = probability.topk(k=min(self.args.text_prompt, probability.shape[1]), dim=1, largest=True)
+            text_key = self.text_key / self.text_key.norm(dim=-1, keepdim=True) # 每个批次上归一化， 保持维度
+            probability = image_features @ text_key.t() # Cosine similarity .t()是转置的意思
+            # 和每一个key相乘选择最相似的， indices的尺寸是 [batchsize, choosen_k], 存储choosen k 的下标
+            _, indices = probability.topk(k=min(self.args.text_prompt, probability.shape[1]), dim=1, largest=True) # 选择topk 个提示
             key_choose = self.text_key[indices]
+            
             text_prompt, tokenized_prompts, nc_prompts, nc_tokenized_prompts = self.prompt_learner(indices)
+            
+            # CLIP Vanilla Infer 
             text_features = self.text_encoder(text_prompt,tokenized_prompts)
             text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             text_features = text_features.view(image_features.shape[0], n_class, -1)
+            # 
             image_features = image_features.unsqueeze(1)
             logit_scale = self.logit_scale.exp()
             logits = logit_scale * (image_features * text_features).sum(-1)
@@ -199,7 +213,7 @@ class CLIP(nn.Module):
             loss_m = dis[~torch.eye(self.args.num_prompt, dtype=torch.bool, device='cuda')].abs().mean()
 
             return logits, image_features, key_choose, loss_m
-
+        
 
     @property
     def dtype(self):
@@ -208,6 +222,7 @@ class CLIP(nn.Module):
 
 class CoOp:
     def __init__(self, prev_key, prev_prompt,args, n_ctx=12, use_float32=False, use_grad_checkpoint=False, keep=False):
+        # 加载 Clip 模型
         clip_model, _ = load(args.ckpt_path)
         clip_model.eval()
         if use_float32:
@@ -223,8 +238,9 @@ class CoOp:
         self.args = args
         dtype = clip_model.dtype
         self.dtype = dtype
-        # prompt learner
+        # prompt learner 的维度
         ctx_dim = clip_model.ln_final.weight.shape[0]
+        # text_key 
         text_key = torch.empty(self.num_prompt, ctx_dim, dtype=self.dtype).cuda()
         nn.init.normal_(text_key, std=0.02)
         text_prompt = torch.empty(self.num_prompt, n_ctx, ctx_dim, dtype=self.dtype).cuda()
@@ -233,6 +249,7 @@ class CoOp:
             self.text_key = nn.Parameter(prev_key)
             self.text_prompt = nn.Parameter(prev_prompt)
         else:
+            # 使用nn。Parameter 注册到梯度中
             self.text_key = nn.Parameter(text_key)
             self.text_prompt = nn.Parameter(text_prompt)
 
@@ -253,7 +270,9 @@ class CoOp:
             real_img_bsz = self.train_batch
 
         per_epoch_steps = len(train_loader)
-
+        # 初始化 CLIP 模型
+        # text_key 随机初始化
+        # text_prompt 也是随机初始化
         self.init_model(class_names=data['class_names'], per_epoch_steps=per_epoch_steps,text_key=self.text_key, text_prompt=self.text_prompt)
 
         self.model.eval() # The buffer of the normalization layer will not be changed.
@@ -283,7 +302,7 @@ class CoOp:
 
         self.n_class = len(class_names)
         clip_model = deepcopy(self.clip_model)
-
+        # CoOp内部的model就是CLIP， 所以会调用CLIP forword方法
         self.model = CLIP(self.args, class_names, clip_model, text_key, text_prompt, self.n_ctx)
         if self.use_grad_checkpoint:
             try:

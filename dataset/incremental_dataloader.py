@@ -56,8 +56,10 @@ class IncrementalDataset:
         increment=10,
         validation_split=0.
     ):
+        # 转换为小写
         self.dataset_name = dataset_name.lower().strip()
         datasets = _get_datasets(dataset_name)
+        # 获取对应数据集的transforms
         self.train_transforms = datasets[0].train_transforms 
         self.common_transforms = datasets[0].common_transforms
         try:
@@ -281,6 +283,10 @@ class IncrementalDataset:
             elif self.dataset_name == "cub":
                 train_dataset = dataset.get_base_dataset(root=path, train=True)
                 test_dataset = dataset.get_base_dataset(root=path, train=False)
+            elif self.dataset_name == "classroom":
+                train_dataset = dataset.get_base_dataset(root=path, train=True)
+                test_dataset = dataset.get_base_dataset(root=path, train=False)
+                #
                 # 按字母顺序排序 new_classes，并为每个类分配索引
                 #sorted_classes = sorted(dataset.base_dataset.new_classes)  # 排序后的类
                 #class_to_idx = {cls: idx for idx, cls in enumerate(sorted_classes)}  # 根据字母顺序分配新的索引

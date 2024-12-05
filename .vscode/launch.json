@@ -1,0 +1,27 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "epoch 2 origin attriCLIP",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/data/hx/ICCV2025/AttriCLIP-main/main_incremental_submit_hx_fix.py",
+            "console": "integratedTerminal"
+        },{
+            "name": "origin attriCLIP",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/data/hx/ICCV2025/AttriCLIP-main/main_incremental_submit_hx.py",
+            "console": "integratedTerminal"
+        },{
+            "name": "origin attriCLIP classroom",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/data/hx/ICCV2025/AttriCLIP-main/main_incremental_submit_hx_classroom.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}
